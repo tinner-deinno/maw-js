@@ -65,12 +65,74 @@ export class Tmux {
     this.socket = socket !== undefined ? socket : resolveSocket();
   }
 
-  /** Base runner — executes `tmux [-S socket] <subcommand> [args...]` via hostExec. */
+  /** Base runner — executes `tmux [-S socket] <subcommand> [args...]`. */
   async run(subcommand: string, ...args: (string | number)[]): Promise<string> {
+    const local = !this.host || this.host === "local" || this.host === "localhost";
+
+    // WSL tmux treats # after whitespace as a command-line comment, swallowing
+    // format strings like #{pane_id}.  Glue -F and its format into a single argv
+    // token so the leading # stays adjacent to the flag.
+    const tmuxArgv = (prefix: string[]): string[] => {
+      const out: string[] = [...prefix, subcommand];
+      for (let i = 0; i < args.length; i++) {
+        const a = String(args[i]);
+        if (a === "-F" && i + 1 < args.length) {
+          out.push("-F" + String(args[i + 1]));
+          i += 1;
+        } else {
+          out.push(a);
+        }
+      }
+      return out;
+    };
+
+    // Build a shell-quoted word list.  Format strings are double-quoted and
+    // attached to the preceding -F so bash/WSL do not split them at `|` or `#`.
+    const tmuxShellWords = (): string => {
+      const words: string[] = [];
+      for (let i = 0; i < args.length; i++) {
+        const a = String(args[i]);
+        if (a === "-F" && i + 1 < args.length) {
+          const fmt = String(args[i + 1]);
+          const escaped = fmt.replace(/[\\"`$]/g, "\\$&");
+          words.push(`-F"${escaped}"`);
+          i += 1;
+        } else {
+          words.push(q(a));
+        }
+      }
+      return words.join(" ");
+    };
+
+    const spawnTmux = async (argv: string[]): Promise<string> => {
+      const env = { ...process.env, TERM: process.env.TERM || "xterm" };
+      const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", windowsHide: true, env });
+      const [text, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (code !== 0) {
+        throw new Error(`[local:local] ${err.trim() || `tmux exit ${code}`}`);
+      }
+      return text.trim();
+    };
+
+    if (local && !this.socket) {
+      if (process.platform === "win32") {
+        // Bun.spawn on Windows loses inner quotes when they touch `-F`, and wsl.exe
+        // itself joins argv into a bash -c string.  Pass one properly-quoted shell
+        // command to wsl bash -c so WSL receives the literal command.
+        const cmd = `tmux ${subcommand} ${tmuxShellWords()}`;
+        return spawnTmux(["wsl", "bash", "-c", cmd]);
+      }
+      return spawnTmux(tmuxArgv(["tmux"]));
+    }
+
     const socketFlag = this.socket ? `-S ${q(this.socket)} ` : "";
     const needsTermFallback = !process.env.TERM && process.env.MAW_TEST_MODE !== "1";
     const termPrefix = needsTermFallback ? "TERM=xterm " : "";
-    const cmd = `${termPrefix}tmux ${socketFlag}${subcommand} ${args.map(q).join(" ")}`;
+    const cmd = `${termPrefix}tmux ${socketFlag}${subcommand} ${tmuxShellWords()}`;
     return hostExec(cmd, this.host);
   }
 
