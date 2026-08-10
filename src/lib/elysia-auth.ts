@@ -13,7 +13,7 @@
 
 import { Elysia } from "elysia";
 import { loadConfig, D } from "../config";
-import { verify, isLoopback, verifyRequest, isRefuseDecision, type FromVerifyDecision } from "./federation-auth";
+import { verify, isLoopback, verifyRequest, isRefuseDecision, hashBody, type FromVerifyDecision } from "./federation-auth";
 import { loadPeers } from "./peers/store";
 import type { Server } from "bun";
 
@@ -104,7 +104,16 @@ async function captureBodyForAuth(request: Request, contentType: string): Promis
   const config = loadConfig();
   if (!config.federationToken) return undefined;
   if (!BODY_METHODS.has(request.method.toUpperCase())) return undefined;
-  if (!request.headers.get("x-maw-from")) return undefined;
+  // Capture raw bytes for either consumer of readBodyBytesForAuth():
+  //   - fromSigningAuth (v3 per-peer layer) needs them when `x-maw-from` is set.
+  //   - federationAuth (base token layer, below) needs them when the request
+  //     declares `X-Maw-Auth-Version: v2` — a plain v2 signer (e.g. a direct
+  //     HTTP client that isn't the `maw` CLI) does not send `x-maw-from` at
+  //     all, so without this OR the body would never be captured here, and
+  //     the onBeforeHandle read would hit an already-consumed stream once
+  //     Elysia's default body parser runs.
+  const authVersion = (request.headers.get("x-maw-auth-version") ?? "").toLowerCase();
+  if (!request.headers.get("x-maw-from") && authVersion !== "v2") return undefined;
 
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api/, "");
@@ -122,11 +131,15 @@ async function captureBodyForAuth(request: Request, contentType: string): Promis
 }
 
 async function readBodyBytesForAuth(request: Request): Promise<Uint8Array> {
+  // Non-destructive read: federationAuth (v2 base HMAC) and fromSigningAuth
+  // (v3 per-peer) can both call this for the same request in principle (a
+  // client could send x-maw-from alongside a plain v2-declared base sig
+  // without ever using the v3 signature slot). Deleting on first read would
+  // starve whichever plugin runs second, converting a legitimate verify
+  // into a spurious body_read_failed. The WeakMap entry is GC'd with the
+  // request either way, so there's no leak from leaving it in place.
   const cached = rawBodyBytes.get(request);
-  if (cached) {
-    rawBodyBytes.delete(request);
-    return cached;
-  }
+  if (cached) return cached;
   const clone = request.clone();
   return new Uint8Array(await clone.arrayBuffer());
 }
@@ -240,7 +253,7 @@ export const fromSigningAuth = new Elysia({ name: "from-signing-auth" })
 
 /** Federation auth — Elysia plugin with onBeforeHandle HMAC verification */
 export const federationAuth = new Elysia({ name: "federation-auth" })
-  .onBeforeHandle(({ request, set }) => {
+  .onBeforeHandle(async ({ request, set }) => {
     const config = loadConfig();
     const token = config.federationToken;
 
@@ -316,12 +329,42 @@ export const federationAuth = new Elysia({ name: "federation-auth" })
       return { error: "federation auth failed", reason: "invalid_timestamp" };
     }
 
+    // Reconstruct whatever the sender actually signed, instead of always
+    // re-deriving the v1 payload. A v2 signer binds the body into the
+    // payload (METHOD:PATH:TS:BODY_SHA256);
+    // omitting bodyHash here always re-derives the v1 payload (METHOD:PATH:TS),
+    // so a correct v2 signature never matches and gets a bogus 401
+    // signature_invalid — this was the bug (see docs/federation, elysia-auth
+    // previously never read x-maw-auth-version at all).
+    //
+    // Match must be exact-equals "v2": curlFetch's v3 stack (signHeaders +
+    // signHeadersV3, see core/transport/curl-fetch.ts) signs the base
+    // X-Maw-Signature body-less (v1) but signHeadersV3 unconditionally
+    // overwrites X-Maw-Auth-Version to "v3" on the same header set. So real
+    // cross-node traffic today carries a v1-content signature under a "v3"
+    // label — treating "anything not v1" as body-hashed would 401 every
+    // live v3-stacked send. Only an explicit "v2" declaration means the base
+    // token signature itself is body-bound; mirrors the Hono sibling
+    // implementation's `authVersion === "v2"` check (federation-auth.ts).
+    const authVersion = (request.headers.get("x-maw-auth-version") ?? "v1").toLowerCase();
+    let bodyHash = "";
+    if (authVersion === "v2") {
+      try {
+        const bytes = await readBodyBytesForAuth(request);
+        bodyHash = hashBody(bytes);
+      } catch (err) {
+        console.warn(`[auth] v2 body read failed for ${request.method} ${url.pathname}: ${err instanceof Error ? err.message : String(err)}`);
+        set.status = 401;
+        return { error: "federation auth failed", reason: "body_read_failed" };
+      }
+    }
+
     // Verify against the full /api/... path (same as what peers sign)
-    if (!verify(token, request.method, url.pathname, timestamp, sig)) {
+    if (!verify(token, request.method, url.pathname, timestamp, sig, bodyHash)) {
       const now = Math.floor(Date.now() / 1000);
       const delta = Math.abs(now - timestamp);
       const reason = delta > WINDOW_SEC ? "timestamp_expired" : "signature_invalid";
-      console.warn(`[auth] rejected ${request.method} ${url.pathname} from ${clientIp}: ${reason} (delta=${delta}s)`);
+      console.warn(`[auth] rejected ${request.method} ${url.pathname} from ${clientIp}: ${reason} (delta=${delta}s, version=${authVersion})`);
       set.status = 401;
       return { error: "federation auth failed", reason, ...(delta > WINDOW_SEC ? { delta } : {}) };
     }

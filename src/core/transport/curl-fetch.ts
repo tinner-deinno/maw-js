@@ -80,27 +80,36 @@ export async function curlFetch(url: string, opts?: {
       Object.assign(headers, signed);
     }
     // v3 from-signing layer (#804 Step 4 SIGN). Stacks on top of v2 — both
-    // signatures bind the SAME `X-Maw-Timestamp` because signHeadersV3
-    // emits its own ts (we re-use it here by passing through). Verifier
-    // (Step 4 VERIFY) picks the v3 slot first; falls back to v2 token if
-    // the sender is uncached / v3 absent.
+    // signatures MUST bind the SAME `X-Maw-Timestamp`, so reuse the v2 ts
+    // computed above rather than let signHeadersV3 mint its own via a
+    // second, independent Date.now() call. Without this, a request that
+    // straddles a second boundary between the two signing calls gets a v3
+    // header set whose X-Maw-Timestamp no longer matches what the v1/v2
+    // X-Maw-Signature above was actually signed against — verify()
+    // recomputes the v1/v2 HMAC over the *new* timestamp and it silently
+    // stops matching, producing an intermittent signature_invalid on the
+    // base token layer even though nothing is actually wrong with the
+    // request. Verifier (Step 4 VERIFY) picks the v3 slot first; falls back
+    // to v2 token if the sender is uncached / v3 absent.
     if (opts?.from) {
       const fromAddress = opts.from === "auto"
         ? resolveFromAddress({ oracle: config.oracle, node: config.node })
         : opts.from;
       if (fromAddress) {
         const peerKey = getPeerKey();
+        const sharedTs = headers["X-Maw-Timestamp"] ? parseInt(headers["X-Maw-Timestamp"], 10) : undefined;
         const v3 = signHeadersV3({
           peerKey,
           fromAddress,
           method: opts?.method || "GET",
           path: urlObj.pathname,
           body: opts?.body,
+          timestamp: Number.isFinite(sharedTs) ? sharedTs : undefined,
         });
         // v2 also wrote X-Maw-Timestamp + X-Maw-Auth-Version above. v3's
         // header overrides X-Maw-Auth-Version → "v3" so the verifier looks
-        // at the v3 slot. The shared timestamp is fine — both signatures
-        // bind the same instant.
+        // at the v3 slot. X-Maw-Timestamp is now guaranteed identical since
+        // sharedTs was threaded through above.
         Object.assign(headers, v3);
       }
     }
