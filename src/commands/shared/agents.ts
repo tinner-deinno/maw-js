@@ -28,7 +28,7 @@ export function buildAgentRows(
   panes: Array<{ command: string; target: string; pid?: number }>,
   windowNames: Map<string, string>,
   nodeName: string,
-  opts: { all?: boolean } = {},
+  opts: { all?: boolean; configuredSessions?: Record<string, string> } = {},
 ): AgentRow[] {
   const rows: AgentRow[] = [];
 
@@ -44,10 +44,19 @@ export function buildAgentRows(
       ? windowNames.get(`${session}:${winPart}`) ?? ""
       : winPart;
     const isOracle = windowName.endsWith(ORACLE_SUFFIX);
+    // A configured agent may already be a live Claude/Codex pane whose
+    // window has not been renamed to `<oracle>-oracle` (for example the
+    // long-lived `jit-work:init` session).  Treat it as an agent only when
+    // the configured session exists locally; never invent rows for remote or
+    // stale config entries.
+    const configuredOracle = Object.entries(opts.configuredSessions ?? {})
+      .find(([, configuredSession]) => configuredSession === session)?.[0];
 
-    if (!opts.all && !isOracle) continue;
+    if (!opts.all && !isOracle && !configuredOracle) continue;
 
-    const oracle = isOracle ? windowName.slice(0, -ORACLE_SUFFIX.length) : "";
+    const oracle = isOracle
+      ? windowName.slice(0, -ORACLE_SUFFIX.length)
+      : configuredOracle ?? "";
     const state: "active" | "idle" = SHELL_CMDS.has(pane.command.toLowerCase()) ? "idle" : "active";
 
     rows.push({

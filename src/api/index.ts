@@ -17,6 +17,7 @@ import { avengersApi } from "./avengers";
 import { transportApi } from "./transport";
 import { workspaceApi } from "./workspace";
 import { peerExecApi } from "./peer-exec";
+import { codespaceExecApi } from "./codespace-exec";
 import { proxyApi } from "./proxy";
 import { pulseApi } from "./pulse";
 import { pluginsRouter } from "./plugins";
@@ -64,6 +65,7 @@ export const api = new Elysia({ prefix: "/api" })
   .use(transportApi)
   .use(workspaceApi)
   .use(peerExecApi)
+  .use(codespaceExecApi)
   .use(proxyApi)
   .use(pulseApi)
   .use(pluginsRouter)

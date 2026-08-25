@@ -172,13 +172,17 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
         const path = await takeSnapshot(trigger, retention);
         console.log(`[32m📸[0m snapshot saved: ${path} (trigger: ${trigger})`);
       }
+    } else if (sub === "codespace" || sub === "cs") {
+      const { cmdFleetCodespace } = await import("./fleet-codespace");
+      const result = await cmdFleetCodespace({ args: args.slice(1), writer: ctx.writer });
+      if (!result.ok) return { ok: false, error: result.error || "codespace command failed" };
     } else if (!sub) {
       const { cmdFleetLs } = await import("../../shared/fleet");
       await cmdFleetLs();
     } else {
       return {
         ok: false,
-        error: `unknown fleet subcommand: ${sub}\nusage: maw fleet <init|ls|rename|renumber|validate|health|doctor|config-doctor|consolidate|sync|sync-windows|snapshots|restore|snapshot>\n  tip: maw fleet config-doctor detects repo-local .claude/ drift; maw fleet doctor --reboot checks reboot auto-wake readiness; maw ls shows live sessions`,
+        error: `unknown fleet subcommand: ${sub}\nusage: maw fleet <init|ls|rename|renumber|validate|health|doctor|config-doctor|consolidate|sync|sync-windows|snapshots|restore|snapshot|codespace>\n  tip: maw fleet config-doctor detects repo-local .claude/ drift; maw fleet doctor --reboot checks reboot auto-wake readiness; maw ls shows live sessions`,
       };
     }
 

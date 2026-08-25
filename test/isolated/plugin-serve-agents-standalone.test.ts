@@ -6,20 +6,24 @@ import { expectStandalonePluginBoundary } from "./helpers/plugin-standalone-boun
 const root = join(import.meta.dir, "../..");
 let listAllError: Error | undefined;
 let listPanesError: Error | undefined;
+let includeConfiguredPane = false;
 
 function buildRows(
   panes: Array<{ command: string; target: string; pid?: number }>,
   windowNames: Map<string, string>,
   node: string,
-  opts: { all?: boolean } = {},
+  opts: { all?: boolean; configuredSessions?: Record<string, string> } = {},
 ) {
   return panes.flatMap((pane) => {
     const match = pane.target.match(/^(.+):(.+)\.\d+$/);
     if (!match) return [];
     const [, session, winPart] = match;
     const window = /^\d+$/.test(winPart) ? windowNames.get(`${session}:${winPart}`) ?? "" : winPart;
-    const oracle = window.endsWith("-oracle") ? window.slice(0, -"-oracle".length) : "";
-    if (!opts.all && !oracle) return [];
+    const isOracle = window.endsWith("-oracle");
+    const configuredOracle = Object.entries(opts.configuredSessions ?? {})
+      .find(([, configuredSession]) => configuredSession === session)?.[0];
+    const oracle = isOracle ? window.slice(0, -"-oracle".length) : configuredOracle ?? "";
+    if (!opts.all && !isOracle && !configuredOracle) return [];
     return [{
       node,
       session,
@@ -32,22 +36,26 @@ function buildRows(
 }
 
 mock.module("maw-js/sdk", () => ({
-  loadConfig: () => ({ node: "test-node" }),
+  loadConfig: () => ({ node: "test-node", sessions: includeConfiguredPane ? { jit: "jit-work" } : undefined }),
   tmux: {
     listAll: async () => {
       if (listAllError) throw listAllError;
-      return [
+      const sessions = [
         { name: "01-mawjs", windows: [{ index: "0", name: "mawjs-oracle" }] },
         { name: "02-neo", windows: [{ index: "0", name: "neo-oracle" }, { index: "1", name: "shell" }] },
       ];
+      if (includeConfiguredPane) sessions.push({ name: "jit-work", windows: [{ index: "0", name: "init" }] });
+      return sessions;
     },
     listPanes: async () => {
       if (listPanesError) throw listPanesError;
-      return [
+      const panes = [
         { command: "claude", target: "01-mawjs:0.0", pid: 1001 },
         { command: "claude", target: "02-neo:0.0", pid: 1002 },
         { command: "zsh", target: "02-neo:1.0", pid: 1003 },
       ];
+      if (includeConfiguredPane) panes.push({ command: "claude", target: "jit-work:init.0", pid: 1004 });
+      return panes;
     },
   },
   buildAgentRows: buildRows,
@@ -113,6 +121,25 @@ describe("serve-agents plugin standalone boundary (#2447)", () => {
 
     const one = await plugin.buildAgentsReadResponse(new Request("http://local/api/agents?all=1"));
     expect((await json(one)).count).toBe(3);
+  });
+
+  test("forwards configured live sessions into the endpoint response", async () => {
+    includeConfiguredPane = true;
+    try {
+      const res = await plugin.buildAgentsReadResponse(new Request("http://local/api/agents"));
+      expect(res.status).toBe(200);
+      const body = await json(res);
+      expect(body.agents).toContainEqual(expect.objectContaining({
+        node: "test-node",
+        session: "jit-work",
+        window: "init",
+        oracle: "jit",
+        state: "active",
+        pid: 1004,
+      }));
+    } finally {
+      includeConfiguredPane = false;
+    }
   });
 
   test("reports tmux failures as route errors without throwing", async () => {

@@ -17,7 +17,11 @@ function linkBundledPlugins(pluginDir: string, bundled: string): number {
     const dest = join(pluginDir, d);
     if (!isPluginDir(src)) continue;
     if (existsSync(dest)) continue; // already linked / user dir / valid symlink
-    symlinkSync(src, dest);
+    try {
+      symlinkSync(src, dest);
+    } catch {
+      cpSync(src, dest, { recursive: true });
+    }
     linked++;
   }
   return linked;
@@ -141,7 +145,11 @@ function healOrPruneBrokenSymlinks(pluginDir: string, bundledRoots: string[]): {
       if (targetIsValidPlugin && !shouldHealValidTarget) continue;
       unlinkSync(p);
       if (replacement) {
-        symlinkSync(replacement, p);
+        try {
+          symlinkSync(replacement, p);
+        } catch {
+          cpSync(replacement, p, { recursive: true });
+        }
         healed++;
       } else {
         pruned++;

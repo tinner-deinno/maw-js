@@ -47,6 +47,31 @@ describe("buildAgentRows — oracle detection", () => {
     expect(rows[0].oracle).toBe("");
     expect(rows[0].window).toBe("shell");
   });
+
+  test("configured live session is included even when its window is not suffixed -oracle", () => {
+    const panes = [{ command: "claude", target: "jit-work:init.0", pid: 7777 }];
+    const wn = makeWindowNames([["jit-work:0", "init"]]);
+    const rows = buildAgentRows(panes, wn, "mdes001", {
+      configuredSessions: { jit: "jit-work", innova: "02-innova" },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      node: "mdes001",
+      session: "jit-work",
+      window: "init",
+      oracle: "jit",
+      state: "active",
+      pid: 7777,
+    });
+  });
+
+  test("stale configured session does not create a phantom agent row", () => {
+    const panes = [{ command: "claude", target: "other:init.0", pid: 8888 }];
+    const rows = buildAgentRows(panes, new Map(), "mdes001", {
+      configuredSessions: { jit: "jit-work" },
+    });
+    expect(rows).toHaveLength(0);
+  });
 });
 
 describe("buildAgentRows — state detection", () => {

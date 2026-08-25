@@ -48,7 +48,10 @@ export async function buildAgentsReadResponse(
       }
     }
 
-    const rows = deps.buildAgentRows(panes, windowNames, nodeName, { all });
+    const rows = deps.buildAgentRows(panes, windowNames, nodeName, {
+      all,
+      configuredSessions: config.sessions,
+    });
     return Response.json({ agents: rows, count: rows.length, node: nodeName });
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 500 });

@@ -74,7 +74,10 @@ export interface FederationStatusOptions {
  * (PR #398) and the `maw federation --verify` CLI flag.
  */
 /**
- * #1975: Probe `GET /api/sessions` with retries to absorb transient WG jitter.
+ * #1975: Probe the peer's local sessions with retries to absorb transient WG jitter.
+ * `local=true` is intentional: the default sessions route federates peer
+ * sessions, so probing it from both sides can recurse through the same pair
+ * and make federation status appear hung even when identity is healthy.
  *
  * Attempts up to `1 + limits.peerProbeRetries` times, sleeping
  * `intervals.peerRetryBackoff` ms between tries. Returns the first `ok`
@@ -90,7 +93,7 @@ async function probeSessionsWithRetry(url: string) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0 && backoff > 0) await Bun.sleep(backoff);
     try {
-      const res = await curlFetch(`${url}/api/sessions`, { timeout: cfgTimeout("http") });
+      const res = await curlFetch(`${url}/api/sessions?local=true`, { timeout: cfgTimeout("http") });
       if (res.ok || attempt === retries) return res;
     } catch (err) {
       lastErr = err;
