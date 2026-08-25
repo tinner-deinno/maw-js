@@ -314,3 +314,14 @@ registry required). See
 For fresh-install bootstrap, plugin source tiers, vendored registry plugins,
 and `maw plugin install` trust/lock behavior, see
 [`docs/plugins/install-architecture.md`](docs/plugins/install-architecture.md).
+
+## Study / Setup Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [STUDY_LOG.md](STUDY_LOG.md) | Files read, tech stack, and key findings from the documentation pass |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System structure: CLI, API, gateway, federation, plugins, team workspaces |
+| [SETUP.md](SETUP.md) | Install, configure, start server, install UI, verify, run tests |
+| [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Verified gaps, doc issues, and behavior notes |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common problems and recovery steps |
+| [RISKS.md](RISKS.md) | Risk register with severity and mitigations |
