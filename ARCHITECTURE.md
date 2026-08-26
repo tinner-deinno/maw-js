@@ -185,3 +185,42 @@ Lens entry point: `http://localhost:3456/federation_2d.html`
 - `commands`: engine command templates per agent pattern
 - `sessions`: session slot assignments
 - `env`: environment variables passed to agents (secrets belong here, not in repo)
+
+---
+
+## WSE Pattern (World State Engine)
+
+The **WSE Pattern** is Boss's mental model for separating concerns in multi-agent systems. It is **implicit** in most repos (no formal spec until 2026-08-26) but operational in canonical maw-js engine.
+
+### Core Concept
+
+- **Engine = World** — Engine layer holds state (NPCs, tick loop, belief revision)
+- **LLM = Intelligence** — LLM layer invoked ONLY when needed (decision, score, propose)
+- **Gate 10.6** — Experience → Belief → Candidate → Score → Decision → Tick 1 → Tick 2
+
+### Token Savings
+
+WSE pattern produces **10-100x token savings** vs. always-LLM architectures:
+- LLM only invoked at belief revision or candidate scoring
+- State persistence in DB, not in prompt
+- Tick loop = pure function, no LLM cost per tick
+
+### Where It Lives
+
+- **maw-js**: Engine layer (state, tick loop, peer federation)
+- **URL-Checker**: scheduler.py (WSE-like tick loop verified)
+- **Not yet implemented**: bagidea-office, claude-browser-proxy (not recommended)
+
+### Pattern Files (6-file convention)
+
+```
+ARCHITECTURE.md    — system map
+KNOWN_ISSUES.md    — bugs + workarounds
+RISKS.md           — operational risks
+SETUP.md           — install + config
+STUDY_LOG.md       — investigation log
+TROUBLESHOOTING.md — recovery paths
+```
+
+Adopted 2026-06-18/19 study pass. See `WSE_REVIEW_REPORT.md` in `Jit/handoffs/2026-08-26-wse-review/` for cross-repo scores.
+
