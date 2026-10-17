@@ -556,7 +556,10 @@ function shellQuote(value: string): string {
 }
 
 async function checkInstall(): Promise<{ name: string; ok: boolean; message: string }> {
-  const binPath = join(homedir(), ".bun/bin/maw");
+  // Windows bun shims are `maw.exe` / `maw.cmd` — the bare `maw` name is POSIX-only.
+  const binNames = process.platform === "win32" ? ["maw.exe", "maw.cmd", "maw"] : ["maw"];
+  const binPaths = binNames.map((name) => join(homedir(), ".bun/bin", name));
+  const binPath = binPaths.find((p) => existsSync(p)) ?? binPaths[0];
   const exists = existsSync(binPath);
   if (!exists) {
     console.log(`  ${C.yellow}⚠${C.reset} maw binary missing at ${binPath}`);
@@ -577,7 +580,7 @@ async function checkInstall(): Promise<{ name: string; ok: boolean; message: str
     console.log(`  ${C.gray}attempting reinstall…${C.reset}`);
     try {
       execSync("bun add -g github:Soul-Brews-Studio/maw-js", { stdio: "inherit" });
-      const nowExists = existsSync(binPath);
+      const nowExists = binPaths.some((p) => existsSync(p));
       return {
         name: "install",
         ok: nowExists,
