@@ -299,18 +299,21 @@ function formatForwardMessage(checks: DoctorCheck[], comparison: DoctorCompariso
 
 async function checkServeHealth(): Promise<DoctorCheck> {
   const port = defaultPort();
+  // Probe 127.0.0.1, not localhost: the listener binds IPv4, while `localhost`
+  // resolves to ::1 first on a dual-stack host, so a healthy server reads as
+  // unreachable. Use /info rather than /health as well — /health runs the full
+  // aggregate sweep (~16s: tmux, disk, memory, peers) and can never answer
+  // inside a liveness timeout, whereas /info replies in ~2ms and already
+  // carries the version this check reports.
   try {
-    const res = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(700) });
+    const res = await fetch(`http://127.0.0.1:${port}/info`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) {
-      return { name: "serve", ok: false, severity: "warn", message: `health endpoint returned HTTP ${res.status} on :${port}`, fix: ["maw serve"] };
+      return { name: "serve", ok: false, severity: "warn", message: `info endpoint returned HTTP ${res.status} on :${port}`, fix: ["maw serve"] };
     }
     let version = "";
     try {
-      const info = await fetch(`http://localhost:${port}/info`, { signal: AbortSignal.timeout(700) });
-      if (info.ok) {
-        const body: any = await info.json();
-        if (typeof body?.version === "string") version = ` (${body.version})`;
-      }
+      const body: any = await res.json();
+      if (typeof body?.version === "string") version = ` (${body.version})`;
     } catch { /* best-effort */ }
     return { name: "serve", ok: true, severity: "info", message: `running${version} on :${port}` };
   } catch {
